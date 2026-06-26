@@ -80,4 +80,7 @@ async function run() {
   }
 }
 
+// Minimal HTTP server so easypanel healthcheck passes
+require('http').createServer((_, res) => res.end('ok')).listen(3000);
+
 run();
