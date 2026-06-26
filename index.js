@@ -17,6 +17,9 @@ async function getJuanConversations() {
 }
 
 function extractCustomerPhone(conv) {
+  // Prefer contact.phoneNumber (always the customer)
+  if (conv.contact?.phoneNumber) return conv.contact.phoneNumber.replace(/\D/g, '');
+  // Fallback: scan messages
   for (const msg of conv.messages || []) {
     if (msg.messageDirection === 0 && msg.from) return msg.from.replace(/\D/g, '');
     if (msg.messageDirection === 1 && msg.to)  return msg.to.replace(/\D/g, '');
