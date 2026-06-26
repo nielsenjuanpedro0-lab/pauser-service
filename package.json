@@ -1,0 +1,12 @@
+{
+  "name": "necobot-pauser",
+  "version": "1.0.0",
+  "description": "Polls yCloud for Juan-assigned conversations and pauses them in Supabase",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
