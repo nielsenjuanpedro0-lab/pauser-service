@@ -71,33 +71,22 @@ async function poll() {
   const convs = await getAllConversations();
   const juanConvs = convs.filter(c => c.assigneeId === JUAN_AGENT_ID);
 
-  // Direction A: Juan assigned in ycloud → check Supabase
-  // Supabase ACTIVO (empty) = admin cleared it intentionally → UNASSIGN Juan (Supabase wins)
-  // Supabase not PAUSADO/DERIVADO → set PAUSADO (new assignment by Juan)
+  // Direction A: Juan assigned in ycloud → always set PAUSADO in Supabase (bot silencia)
   for (const conv of juanConvs) {
     const phone = extractCustomerPhone(conv);
     if (!phone) continue;
     const digits = phone.slice(-10);
     const estado = await getSupabaseEstado(digits);
 
-    if (estado === '') {
-      // Admin cleared Supabase → bot should take over → unassign Juan
-      await ycloudTransfer(conv.id, '', true);
-      console.log(`[${new Date().toISOString()}] DESASIGNADO (admin despausó) → ${phone}`);
-    } else if (!estado.startsWith('PAUSADO') && !estado.startsWith('DERIVADO')) {
-      // Shouldn't happen but handle gracefully
-      await ycloudTransfer(conv.id, '', true);
-      console.log(`[${new Date().toISOString()}] DESASIGNADO (estado desconocido) → ${phone}`);
-    } else if (!estado.startsWith('PAUSADO')) {
-      // DERIVADO but not PAUSADO yet → set PAUSADO
+    if (!estado.startsWith('PAUSADO')) {
       const expiry = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
       await supabasePatch(digits, `PAUSADO:${expiry}`);
-      console.log(`[${new Date().toISOString()}] PAUSADO (desde DERIVADO) → ${phone}`);
+      console.log(`[${new Date().toISOString()}] PAUSADO (Juan asignado) → ${phone}`);
     }
-    // If already PAUSADO → nothing to do
+    // Already PAUSADO → nothing
   }
 
-  // Direction B: Supabase DERIVADO → assign Juan in ycloud if not already
+  // Direction B: Supabase DERIVADO → assign Juan in ycloud + set PAUSADO
   const allRows = await getAllSupabaseRows();
   for (const row of allRows.filter(r => r.estado_conversacion?.startsWith('DERIVADO'))) {
     const phone = row.telefono.replace(/\D/g, '');
@@ -109,14 +98,25 @@ async function poll() {
     if (conv.assigneeId === JUAN_AGENT_ID) continue;
 
     await ycloudTransfer(conv.id, JUAN_AGENT_ID, false);
-    // Also set PAUSADO in Supabase
     const expiry = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
     await supabasePatch(phone.slice(-10), `PAUSADO:${expiry}`);
     console.log(`[${new Date().toISOString()}] ASIGNADO + PAUSADO → ${phone} (conv: ${conv.id})`);
   }
 
-  // Direction C: Juan assigned in ycloud, Supabase PAUSADO → keep in sync, nothing to do
-  // (already handled above)
+  // Direction D: Supabase PAUSADO + Juan NO asignado en ycloud → liberar bot (clear Supabase)
+  for (const row of allRows.filter(r => r.estado_conversacion?.startsWith('PAUSADO'))) {
+    const phone = row.telefono.replace(/\D/g, '');
+    const conv = convs.find(c => {
+      const p = extractCustomerPhone(c);
+      return p && p.endsWith(phone.slice(-10));
+    });
+    if (!conv) continue; // sin conv activa en ycloud → no tocar
+    if (conv.assigneeId === JUAN_AGENT_ID) continue; // Juan sigue asignado → mantener pausado
+
+    // Conv existe pero Juan ya no está asignado → liberar bot
+    await supabasePatch(phone.slice(-10), '');
+    console.log(`[${new Date().toISOString()}] LIBERADO (Juan desasignado) → ${phone}`);
+  }
 }
 
 async function run() {
