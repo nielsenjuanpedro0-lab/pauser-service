@@ -1,5 +1,5 @@
 const YCLOUD_COOKIE = 'remember-me=anVhbm1hdGlhczE5OTYlNDBnbWFpbC5jb206MTc4NDY2Njk3NjQ5ODpjMDY5MWE5NzUyMmI1NzM5ZTgxNjRhZTA2NTZmZDU3Mg';
-const JUAN_AGENT_ID = '6a32cf72dc383e50473183ca';
+const JUAN_AGENT_ID = '6a32db30e0e65a1bac12a7a2';
 const SUPABASE_URL = 'https://qukgtlwessujumdmfgnm.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1a2d0bHdlc3N1anVtZG1mZ25tIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjM3MjY1MCwiZXhwIjoyMDg3OTQ4NjUwfQ.iWPH9PEGNixiZUPl8f-pJLv7dl6wBeOEw9psOnlrMq4';
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '15000');
