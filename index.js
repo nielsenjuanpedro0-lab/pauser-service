@@ -58,6 +58,21 @@ async function supabasePatch(phoneDigits, estado) {
   if (!resp.ok) throw new Error(`supabase PATCH failed: ${resp.status}`);
 }
 
+async function supabaseUpsert(fullPhone, estado) {
+  const resp = await fetch(
+    `${SUPABASE_URL}/rest/v1/memoria_ram`,
+    {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal',
+      },
+      body: JSON.stringify({ telefono: fullPhone, estado_conversacion: estado, historial: '[]' }),
+    }
+  );
+  if (!resp.ok) throw new Error(`supabase upsert failed: ${resp.status}`);
+}
+
 async function getAllSupabaseRows() {
   const resp = await fetch(
     `${SUPABASE_URL}/rest/v1/memoria_ram?select=telefono,estado_conversacion`,
@@ -80,7 +95,7 @@ async function poll() {
 
     if (!estado.startsWith('PAUSADO')) {
       const expiry = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
-      await supabasePatch(digits, `PAUSADO:${expiry}`);
+      await supabaseUpsert(phone, `PAUSADO:${expiry}`);
       console.log(`[${new Date().toISOString()}] PAUSADO (Juan asignado) → ${phone}`);
     }
     // Already PAUSADO → nothing
