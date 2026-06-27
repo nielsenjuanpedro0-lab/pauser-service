@@ -33,16 +33,16 @@ async function ycloudTransfer(convId, agentId, unassigned) {
   if (!resp.ok) throw new Error(`ycloud transfer failed: ${resp.status}`);
 }
 
-async function getSupabaseEstado(phoneDigits) {
+async function getAllSupabaseRows() {
   const resp = await fetch(
-    `${SUPABASE_URL}/rest/v1/memoria_ram?telefono=ilike.*${phoneDigits}*&select=telefono,estado_conversacion&limit=1`,
+    `${SUPABASE_URL}/rest/v1/memoria_ram?select=telefono,estado_conversacion`,
     { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
   );
-  if (!resp.ok) throw new Error(`supabase GET failed: ${resp.status}`);
-  const rows = await resp.json();
-  return rows[0]?.estado_conversacion || '';
+  if (!resp.ok) throw new Error(`supabase GET all failed: ${resp.status}`);
+  return await resp.json();
 }
 
+// PATCH only – for rows that already exist in Supabase
 async function supabasePatch(phoneDigits, estado) {
   const resp = await fetch(
     `${SUPABASE_URL}/rest/v1/memoria_ram?telefono=ilike.*${phoneDigits}*`,
@@ -58,51 +58,59 @@ async function supabasePatch(phoneDigits, estado) {
   if (!resp.ok) throw new Error(`supabase PATCH failed: ${resp.status}`);
 }
 
-async function supabaseUpsert(fullPhone, estado) {
+// INSERT only – for phones with no existing Supabase row
+async function supabaseInsert(fullPhone, estado) {
   const resp = await fetch(
     `${SUPABASE_URL}/rest/v1/memoria_ram`,
     {
       method: 'POST',
       headers: {
         apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`,
-        'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal',
+        'Content-Type': 'application/json', Prefer: 'return=minimal',
       },
       body: JSON.stringify({ telefono: fullPhone, estado_conversacion: estado, historial: '[]' }),
     }
   );
-  if (!resp.ok) throw new Error(`supabase upsert failed: ${resp.status}`);
-}
-
-async function getAllSupabaseRows() {
-  const resp = await fetch(
-    `${SUPABASE_URL}/rest/v1/memoria_ram?select=telefono,estado_conversacion`,
-    { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
-  );
-  if (!resp.ok) throw new Error(`supabase GET all failed: ${resp.status}`);
-  return await resp.json();
+  // 409 = conflict (unique violation) → row was created by bot between our read and write → ok
+  if (!resp.ok && resp.status !== 409) throw new Error(`supabase INSERT failed: ${resp.status}`);
 }
 
 async function poll() {
   const convs = await getAllConversations();
   const juanConvs = convs.filter(c => c.assigneeId === JUAN_AGENT_ID);
 
-  // Direction A: Juan assigned in ycloud → always set PAUSADO in Supabase (bot silencia)
+  // Single GET for all Supabase rows → build map digits→estado
+  const allRows = await getAllSupabaseRows();
+  const supaMap = {};
+  for (const row of allRows) {
+    const digits = row.telefono.replace(/\D/g, '').slice(-10);
+    supaMap[digits] = row.estado_conversacion || '';
+  }
+
+  // Direction A: Juan assigned in ycloud → set PAUSADO if not already
   for (const conv of juanConvs) {
     const phone = extractCustomerPhone(conv);
     if (!phone) continue;
     const digits = phone.slice(-10);
-    const estado = await getSupabaseEstado(digits);
+    const estado = supaMap[digits] !== undefined ? supaMap[digits] : null;
 
-    if (!estado.startsWith('PAUSADO')) {
-      const expiry = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
-      await supabaseUpsert(phone, `PAUSADO:${expiry}`);
-      console.log(`[${new Date().toISOString()}] PAUSADO (Juan asignado) → ${phone}`);
+    if (estado !== null && estado.startsWith('PAUSADO')) continue; // already PAUSADO → skip
+
+    const expiry = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+    const newEstado = `PAUSADO:${expiry}`;
+
+    if (estado === null) {
+      // No row in Supabase at all → INSERT
+      await supabaseInsert(phone, newEstado);
+    } else {
+      // Row exists but not PAUSADO → PATCH (preserves historial etc.)
+      await supabasePatch(digits, newEstado);
     }
-    // Already PAUSADO → nothing
+    supaMap[digits] = newEstado; // update local map so Direction D sees it
+    console.log(`[${new Date().toISOString()}] PAUSADO (Juan asignado) → ${phone}`);
   }
 
   // Direction B: Supabase DERIVADO → assign Juan in ycloud + set PAUSADO
-  const allRows = await getAllSupabaseRows();
   for (const row of allRows.filter(r => r.estado_conversacion?.startsWith('DERIVADO'))) {
     const phone = row.telefono.replace(/\D/g, '');
     const conv = convs.find(c => {
@@ -118,7 +126,7 @@ async function poll() {
     console.log(`[${new Date().toISOString()}] ASIGNADO + PAUSADO → ${phone} (conv: ${conv.id})`);
   }
 
-  // Direction D: Supabase PAUSADO + Juan NO asignado en ycloud → liberar bot (clear Supabase)
+  // Direction D: Supabase PAUSADO + Juan NO asignado en ycloud → liberar bot
   for (const row of allRows.filter(r => r.estado_conversacion?.startsWith('PAUSADO'))) {
     const phone = row.telefono.replace(/\D/g, '');
     const conv = convs.find(c => {
